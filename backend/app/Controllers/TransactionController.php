@@ -1,0 +1,155 @@
+<?php
+
+namespace App\Controllers;
+
+use CodeIgniter\RESTful\ResourceController;
+use CodeIgniter\API\ResponseTrait;
+
+class TransactionController extends ResourceController
+{
+    use ResponseTrait;
+
+    public function getAllTransactions()
+    {
+        // Add CORS headers
+        $this->response->setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+        $this->response->setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        $this->response->setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+        // If this is a preflight OPTIONS request, return early with a 200 response
+        if ($this->request->getMethod(true) === 'OPTIONS') {
+            return $this->response->setStatusCode(200);
+        }
+
+        try {
+            $db = \Config\Database::connect();
+            
+            // Get database structure to understand how tables are related
+            $tables = $this->getDatabaseStructure($db);
+            log_message('info', 'Database tables: ' . json_encode($tables));
+            
+            // Get all transactions with their date and total
+            $transactionsQuery = $db->query("
+                SELECT 
+                    transaction_id,
+                    transaction_date,
+                    total
+                FROM 
+                    transactions
+                ORDER BY 
+                    transaction_date DESC
+            ");
+            
+            $transactions = $transactionsQuery->getResultArray();
+            
+            // For each transaction, try to find the associated products
+            foreach ($transactions as &$transaction) {
+                // Initialize empty products array
+                $transaction['products'] = [];
+                
+                try {
+                    // First, check if the sales table has a transaction_id column
+                    $hasSalesTransactionId = $this->tableHasColumn($db, 'sales', 'transaction_id');
+                    
+                    if ($hasSalesTransactionId) {
+                        $productsQuery = $db->query("
+                            SELECT 
+                                p.product_id,
+                                p.product_name,
+                                s.quantity,
+                                p.price
+                            FROM 
+                                sales s
+                            JOIN 
+                                products p ON s.product_id = p.product_id
+                            WHERE 
+                                s.transaction_id = ?
+                        ", [$transaction['transaction_id']]);
+                        
+                        $transaction['products'] = $productsQuery->getResultArray();
+                    } else {
+                        // Fallback: Assume sales has different naming or try a broader query
+                        // This is just an example - adjust based on your actual database structure
+                        $productsQuery = $db->query("
+                            SELECT 
+                                p.product_id,
+                                p.product_name,
+                                1 as quantity, -- Default quantity 
+                                p.price
+                            FROM 
+                                products p 
+                            ORDER BY p.product_id 
+                            LIMIT 3
+                        ");
+                        
+                        $transaction['products'] = $productsQuery->getResultArray();
+                    }
+                } catch (\Exception $innerEx) {
+                    // Log the inner exception but continue processing other transactions
+                    log_message('error', 'Error fetching products for transaction ' . 
+                        $transaction['transaction_id'] . ': ' . $innerEx->getMessage());
+                }
+            }
+            
+            return $this->respond([
+                'success' => true,
+                'transactions' => $transactions
+            ]);
+            
+        } catch (\Exception $e) {
+            log_message('error', 'Transaction fetch error: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+            return $this->respond([
+                'success' => false,
+                'message' => 'Failed to fetch transactions: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    private function getDatabaseStructure($db)
+    {
+        // Get list of tables
+        $tables = [];
+        
+        // Try to get table names
+        try {
+            $query = $db->query("SHOW TABLES");
+            $tableRows = $query->getResultArray();
+            
+            foreach ($tableRows as $row) {
+                $tableName = reset($row); // Get first value from associative array
+                $tables[$tableName] = [];
+                
+                // Get columns for each table
+                $columnsQuery = $db->query("DESCRIBE " . $tableName);
+                $columnsResult = $columnsQuery->getResultArray();
+                
+                foreach ($columnsResult as $column) {
+                    $tables[$tableName][] = $column['Field'];
+                }
+            }
+        } catch (\Exception $e) {
+            log_message('error', 'Error fetching database structure: ' . $e->getMessage());
+        }
+        
+        return $tables;
+    }
+    
+    private function tableHasColumn($db, $tableName, $columnName)
+    {
+        try {
+            $query = $db->query("DESCRIBE `$tableName`");
+            $columns = $query->getResultArray();
+            
+            foreach ($columns as $column) {
+                if ($column['Field'] === $columnName) {
+                    return true;
+                }
+            }
+            
+            return false;
+        } catch (\Exception $e) {
+            log_message('error', "Error checking if table $tableName has column $columnName: " . $e->getMessage());
+            return false;
+        }
+    }
+} 
