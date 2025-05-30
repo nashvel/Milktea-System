@@ -42,3 +42,12 @@ $routes->get('api/dashboard/recent-orders', 'DashboardController::recentOrders')
 
 //transactions
 $routes->get('api/transactions', 'TransactionController::getAllTransactions');
+$routes->post('api/transactions', 'TransactionController::createTransaction');
+
+//ingredients
+$routes->get('api/ingredients', 'Ingredients::index');
+$routes->get('api/ingredients/(:num)', 'Ingredients::show/$1');
+$routes->post('api/ingredients', 'Ingredients::create'); // Add new ingredient
+$routes->post('api/ingredients/(:num)/restock', 'Ingredients::restock/$1');
+$routes->post('api/ingredients/deduct-for-order', 'Ingredients::deductForOrder');
+$routes->patch('api/ingredients/(:num)', 'Ingredients::update/$1');

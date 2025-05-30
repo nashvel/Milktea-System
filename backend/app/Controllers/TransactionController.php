@@ -152,4 +152,194 @@ class TransactionController extends ResourceController
             return false;
         }
     }
-} 
+    
+    /**
+     * Create a new transaction with automatic ingredient deduction
+     * 
+     * @return mixed
+     */
+    public function createTransaction()
+    {
+        // Add CORS headers
+        $this->response->setHeader('Access-Control-Allow-Origin', 'http://localhost:5173');
+        $this->response->setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        $this->response->setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+        // If this is a preflight OPTIONS request, return early with a 200 response
+        if ($this->request->getMethod(true) === 'OPTIONS') {
+            return $this->response->setStatusCode(200);
+        }
+        
+        // Validate request data
+        $rules = [
+            'customer' => 'permit_empty|string',
+            'total' => 'required|numeric',
+            'products' => 'required',
+            'products.*.product_id' => 'required|integer|is_not_unique[products.product_id]',
+            'products.*.quantity' => 'required|integer|greater_than[0]'
+        ];
+        
+        if (!$this->validate($rules)) {
+            return $this->fail($this->validator->getErrors());
+        }
+        
+        $db = \Config\Database::connect();
+        $db->transBegin(); // Start transaction for database consistency
+        
+        try {
+            // 1. Create transaction record
+            $transactionData = [
+                'transaction_date' => date('Y-m-d H:i:s'),
+                'customer' => $this->request->getVar('customer') ?? 'Walk-in Customer',
+                'total' => $this->request->getVar('total')
+            ];
+            
+            $db->table('transactions')->insert($transactionData);
+            $transactionId = $db->insertID();
+            
+            if (!$transactionId) {
+                throw new \Exception('Failed to create transaction record');
+            }
+            
+            // 2. Process each product in the order
+            $products = $this->request->getVar('products');
+            $productIds = []; // Track products for ingredient deduction
+            $productQuantities = []; // Track quantities for ingredient deduction
+            
+            foreach ($products as $product) {
+                // Create sales record for each product
+                $salesData = [
+                    'transaction_id' => $transactionId,
+                    'product_id' => $product['product_id'],
+                    'quantity' => $product['quantity'],
+                    'payment_method' => $this->request->getVar('payment_method') ?? 'Cash'
+                ];
+                
+                $db->table('sales')->insert($salesData);
+                
+                // Track for ingredient deduction
+                $productIds[] = $product['product_id'];
+                $productQuantities[$product['product_id']] = $product['quantity'];
+                
+                // Update product stock (optional, depending on your business logic)
+                $currentProduct = $db->table('products')->where('product_id', $product['product_id'])->get()->getRowArray();
+                if ($currentProduct) {
+                    $newStock = max(0, $currentProduct['stock'] - $product['quantity']);
+                    $db->table('products')->where('product_id', $product['product_id'])->update(['stock' => $newStock]);
+                }
+            }
+            
+            // 3. Deduct ingredients based on specific product requirements
+            $this->deductIngredients($productIds, $productQuantities);
+            
+            // Commit transaction if everything succeeded
+            $db->transCommit();
+            
+            return $this->respondCreated([
+                'success' => true,
+                'message' => 'Transaction created successfully',
+                'transaction_id' => $transactionId
+            ]);
+            
+        } catch (\Exception $e) {
+            // Rollback transaction on error
+            $db->transRollback();
+            
+            log_message('error', 'Transaction creation error: ' . $e->getMessage());
+            return $this->respond([
+                'success' => false,
+                'message' => 'Failed to create transaction: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Deduct ingredients for ordered products
+     * 
+     * @param array $productIds Array of product IDs in the order
+     * @param array $productQuantities Array of product quantities indexed by product_id
+     * @return void
+     */
+    private function deductIngredients($productIds, $productQuantities)
+    {
+        if (empty($productIds)) {
+            return;
+        }
+        
+        $db = \Config\Database::connect();
+        
+        // Check if product_ingredients table exists
+        $productIngredientsExist = false;
+        try {
+            $query = $db->query("SHOW TABLES LIKE 'product_ingredients'");
+            $productIngredientsExist = $query->getNumRows() > 0;
+        } catch (\Exception $e) {
+            log_message('error', 'Error checking product_ingredients table: ' . $e->getMessage());
+        }
+        
+        // If product_ingredients table exists, use relationships
+        if ($productIngredientsExist) {
+            // Get ingredients for all products in the order
+            $productIngredients = $db->table('product_ingredients')
+                ->whereIn('product_id', $productIds)
+                ->get()
+                ->getResultArray();
+            
+            $ingredientUpdates = [];
+            
+            // Calculate new quantities for each ingredient
+            foreach ($productIngredients as $pi) {
+                $productId = $pi['product_id'];
+                $ingredientId = $pi['ingredient_id'];
+                $quantityRequired = $pi['quantity_required'];
+                $orderQuantity = $productQuantities[$productId] ?? 0;
+                
+                // Skip if product not in order or no quantity
+                if ($orderQuantity <= 0) {
+                    continue;
+                }
+                
+                // Calculate total amount to deduct
+                $deductAmount = $quantityRequired * $orderQuantity;
+                
+                // Add to updates (aggregate in case same ingredient used in multiple products)
+                if (!isset($ingredientUpdates[$ingredientId])) {
+                    $ingredientUpdates[$ingredientId] = $deductAmount;
+                } else {
+                    $ingredientUpdates[$ingredientId] += $deductAmount;
+                }
+            }
+            
+            // Update each ingredient quantity
+            foreach ($ingredientUpdates as $ingredientId => $deductAmount) {
+                $ingredient = $db->table('ingredients')->where('ingredient_id', $ingredientId)->get()->getRowArray();
+                if ($ingredient) {
+                    $newQuantity = max(0, $ingredient['quantity'] - $deductAmount);
+                    $db->table('ingredients')->where('ingredient_id', $ingredientId)->update(['quantity' => $newQuantity]);
+                }
+            }
+        } else {
+            // Fallback to hardcoded deductions as specified
+            // Every product in the order will deduct these ingredients by the specified amounts
+            $hardcodedIngredients = [
+                26 => 4,   // ice cubes: 4 pieces per product
+                27 => 2,   // oreo: 2 pieces per product
+                28 => 40   // sugar daddy: 40 grams per product
+            ];
+            
+            // Calculate total order quantity
+            $totalOrderQuantity = array_sum($productQuantities);
+            
+            // Update each hardcoded ingredient
+            foreach ($hardcodedIngredients as $ingredientId => $deductPerProduct) {
+                $totalDeduct = $deductPerProduct * $totalOrderQuantity;
+                
+                $ingredient = $db->table('ingredients')->where('ingredient_id', $ingredientId)->get()->getRowArray();
+                if ($ingredient) {
+                    $newQuantity = max(0, $ingredient['quantity'] - $totalDeduct);
+                    $db->table('ingredients')->where('ingredient_id', $ingredientId)->update(['quantity' => $newQuantity]);
+                }
+            }
+        }
+    }
+}

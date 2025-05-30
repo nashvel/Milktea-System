@@ -25,14 +25,29 @@ class Cors implements FilterInterface
      */
     public function before(RequestInterface $request, $arguments = null)
     {
-        header('Access-Control-Allow-Origin: http://localhost:5173');
+        // Allow from any origin
+        if (isset($_SERVER['HTTP_ORIGIN'])) {
+            // Decide if the origin in $_SERVER['HTTP_ORIGIN'] is one
+            // you want to allow, and if so:
+            header("Access-Control-Allow-Origin: {$_SERVER['HTTP_ORIGIN']}");
+            header('Access-Control-Allow-Credentials: true');
+        } else {
+            // Allow specific origins - fallback if HTTP_ORIGIN not set
+            header('Access-Control-Allow-Origin: http://localhost:5173');
+        }
+        
         header("Access-Control-Allow-Headers: X-API-KEY, Origin, X-Requested-With, Content-Type, Accept, Access-Control-Request-Method, Authorization");
         header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE, PATCH");
+        
+        // Cache preflight response for 3600s
+        header('Access-Control-Max-Age: 3600');
         
         // Check if it's a preflight request (OPTIONS)
         $method = $_SERVER['REQUEST_METHOD'];
         if ($method == "OPTIONS") {
-            die();
+            // Send response code 200 for preflight
+            http_response_code(200);
+            exit();
         }
     }
 
