@@ -1,0 +1,27 @@
+.sidemenu {
+    width: 250px;
+    transition: width 0.3s;
+  }
+  
+  .sidemenu.collapsed {
+    width: 60px;
+  }
+  
+  .main-content {
+    transition: margin-left 0.3s;
+    margin-left: 250px;
+  }
+  
+  .main-content.expanded {
+    margin-left: 60px;
+  }
+  
+  /* Fade-in animation for modals */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fadeIn {
+    animation: fadeIn 0.3s ease;
+  }
+  

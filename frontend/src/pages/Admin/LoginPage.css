@@ -1,0 +1,53 @@
+/* src/pages/Auth/LoginPage.css */
+
+.login-page {
+  min-height: 100vh;
+  background: linear-gradient(to bottom right, #f4e3cf, #e8c3a4, #d8a07c);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.login-card {
+  background: white;
+  padding: 2rem;
+  border-radius: 0.75rem;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 800px; /* doubled from 400px */
+}
+
+/* Button styles */
+.login-card button {
+  cursor: pointer;
+  background-color: #c17c5d;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.login-card button:hover {
+  background-color: #a9654a;
+}
+
+/* Sign Up button inside the text */
+.login-card .signup-button {
+  background: none;
+  border: none;
+  color: #a9654a;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0;
+  margin-left: 0.25rem;
+  text-decoration: underline;
+}
+
+.login-card .signup-button:hover {
+  color: #7a4b33;
+}
